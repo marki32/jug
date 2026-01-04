@@ -73,6 +73,56 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ mode, p1Ship, p2Ship, onGameOve
   }, [isOnline, isHost, isClient, onGameOver]);
 
 
+  // Helper: Get controls from Keyboard + Gamepad
+  const getControls = (
+    keys: Set<string>, 
+    gamepadIndex: number | null, 
+    keyMapping: { up: string[], down: string[], left: string[], right: string[], shoot: string[], boost: string[] }
+  ): ControlState => {
+    // 1. Keyboard Checks
+    const kUp = keyMapping.up.some(k => keys.has(k));
+    const kDown = keyMapping.down.some(k => keys.has(k));
+    const kLeft = keyMapping.left.some(k => keys.has(k));
+    const kRight = keyMapping.right.some(k => keys.has(k));
+    const kShoot = keyMapping.shoot.some(k => keys.has(k));
+    const kBoost = keyMapping.boost.some(k => keys.has(k));
+
+    // 2. Gamepad Checks
+    let gpUp = false, gpDown = false, gpLeft = false, gpRight = false, gpShoot = false, gpBoost = false;
+    const gp = gamepadIndex !== null ? navigator.getGamepads()[gamepadIndex] : null;
+
+    if (gp) {
+      // Axes (Left Stick or D-Pad if mapped to axes)
+      const axisX = gp.axes[0];
+      const axisY = gp.axes[1];
+      if (axisY < -0.5) gpUp = true;
+      if (axisY > 0.5) gpDown = true;
+      if (axisX < -0.5) gpLeft = true;
+      if (axisX > 0.5) gpRight = true;
+
+      // D-Pad buttons (Standard Gamepad Mapping: 12=Up, 13=Down, 14=Left, 15=Right)
+      if (gp.buttons[12]?.pressed) gpUp = true;
+      if (gp.buttons[13]?.pressed) gpDown = true;
+      if (gp.buttons[14]?.pressed) gpLeft = true;
+      if (gp.buttons[15]?.pressed) gpRight = true;
+
+      // Actions
+      // Button 0 (A/Cross) = Shoot
+      // Button 1 (B/Circle), 2 (X/Square), 6 (L2), 7 (R2) = Boost
+      if (gp.buttons[0]?.pressed) gpShoot = true; 
+      if (gp.buttons[1]?.pressed || gp.buttons[2]?.pressed || gp.buttons[6]?.pressed || gp.buttons[7]?.pressed) gpBoost = true;
+    }
+
+    return {
+      up: kUp || gpUp,
+      down: kDown || gpDown,
+      left: kLeft || gpLeft,
+      right: kRight || gpRight,
+      shoot: kShoot || gpShoot,
+      boost: kBoost || gpBoost
+    };
+  };
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -102,28 +152,50 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ mode, p1Ship, p2Ship, onGameOve
     const render = () => {
       if (!engineRef.current || !ctx) return;
 
-      // Logic Step
+      // Gather Inputs
+      const keys = keysRef.current;
+
+      // Mapping Configuration
+      const p1Keys = { up: ['w'], down: ['s'], left: ['a'], right: ['d'], shoot: [' '], boost: ['shift'] };
+      // For split keyboard P2
+      const p2Keys = { up: ['arrowup'], down: ['arrowdown'], left: ['arrowleft'], right: ['arrowright'], shoot: ['m', '.'], boost: [',', '/'] };
+      // For Client (can use either set)
+      const clientKeys = { 
+        up: ['w', 'arrowup'], 
+        down: ['s', 'arrowdown'], 
+        left: ['a', 'arrowleft'], 
+        right: ['d', 'arrowright'], 
+        shoot: [' ', 'm', '.', 'enter'], 
+        boost: ['shift', ',', '/', 'ctrl'] 
+      };
+
       if (isClient) {
-        // Client Logic: Collect Inputs -> Send to Host
-        const clientControls: ControlState = {
-           // Map WASD to P2 controls
-           up: keysRef.current.has('w'),
-           left: keysRef.current.has('a'),
-           down: keysRef.current.has('s'),
-           right: keysRef.current.has('d'),
-           boost: keysRef.current.has('shift'),
-           shoot: keysRef.current.has(' '),
-        };
-        peerService.send({ type: 'INPUT', controls: clientControls });
+        // Client Mode: Gather local inputs and send to host
+        // Use Gamepad 0 and ANY keys
+        const myControls = getControls(keys, 0, clientKeys);
+        peerService.send({ type: 'INPUT', controls: myControls });
+      
       } else {
-        // Host / Local Logic
-        // 1. Process Local Inputs
-        engineRef.current.handleInput(keysRef.current, mode);
+        // Host or Local Mode
         
-        // 2. Run Physics
+        // P1 Controls (Host Local Player)
+        // Use Gamepad 0 if present
+        const p1Controls = getControls(keys, 0, p1Keys);
+
+        // P2 Controls (Only relevant for LOCAL_PVP)
+        // For Local PvP, P2 uses Gamepad 1 if present, otherwise Keyboard arrows
+        let p2Controls: ControlState | undefined = undefined;
+        if (mode === GameMode.LOCAL_PVP) {
+           p2Controls = getControls(keys, 1, p2Keys);
+        }
+
+        // Apply inputs to engine
+        engineRef.current.handleInput(p1Controls, p2Controls);
+
+        // Run Physics
         engineRef.current.update();
 
-        // 3. If Host, broadcast state
+        // Broadcast state if Host
         if (isHost) {
           peerService.send({ type: 'STATE', state: engineRef.current.state });
         }
@@ -131,7 +203,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ mode, p1Ship, p2Ship, onGameOve
 
       const state = engineRef.current.state;
 
-      // --- RENDERING --- (Common for all modes)
+      // --- RENDERING ---
       
       // Clear
       ctx.fillStyle = '#0f172a'; // Slate-900
@@ -265,7 +337,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ mode, p1Ship, p2Ship, onGameOve
       
       {/* HUD Overlay */}
       <div className="absolute bottom-4 left-4 text-slate-500 font-mono text-xs pointer-events-none opacity-50">
-        CONTROLS: WASD / SPACE / SHIFT
+        CONTROLS: WASD / ARROWS / GAMEPAD
       </div>
       {isOnline && (
         <div className="absolute top-4 right-4 flex items-center gap-2 text-green-400 font-mono text-xs opacity-70">

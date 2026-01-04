@@ -93,32 +93,19 @@ export class GameEngine {
     }
   }
 
-  // Handle local keyboard inputs -> Map to Player Controls
-  handleInput(keys: Set<string>, mode: GameMode) {
-    if (mode === GameMode.ONLINE_CLIENT) return; // Client doesn't control game logic state directly
-
+  // Apply controls to players based on inputs passed from GameCanvas (which handles Keyboard + Gamepad)
+  handleInput(p1Controls: ControlState, p2Controls?: ControlState) {
     const p1 = this.state.players.find(p => p.id === 'p1');
     if (p1 && !p1.destroyed) {
-      p1.controls.up = keys.has('w');
-      p1.controls.left = keys.has('a');
-      p1.controls.down = keys.has('s');
-      p1.controls.right = keys.has('d');
-      p1.controls.boost = keys.has('shift');
-      p1.controls.shoot = keys.has(' ');
+      p1.controls = p1Controls;
     }
 
-    if (mode === GameMode.LOCAL_PVP) {
+    if (p2Controls) {
       const p2 = this.state.players.find(p => p.id === 'p2');
       if (p2 && !p2.destroyed) {
-        p2.controls.up = keys.has('arrowup');
-        p2.controls.left = keys.has('arrowleft');
-        p2.controls.down = keys.has('arrowdown');
-        p2.controls.right = keys.has('arrowright');
-        p2.controls.boost = keys.has(',') || keys.has('/');
-        p2.controls.shoot = keys.has('m') || keys.has('.');
+        p2.controls = p2Controls;
       }
     }
-    // ONLINE_HOST: P2 controls are set via setPlayerControls from network messages
   }
 
   update() {
